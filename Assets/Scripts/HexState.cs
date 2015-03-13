@@ -1,0 +1,1 @@
+﻿public enum HexState { Open, Obstacle, Origin, Objective };
