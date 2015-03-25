@@ -1,11 +1,14 @@
-﻿using UnityEngine;
+﻿//Copyright 2015 by Nicholas Harshfield. All Rights Reserved.
+//View associated license file in root directory for details.
+
+using UnityEngine;
 using System.Collections;
 
 public class Hexagon : MonoBehaviour {
 
     public HexState state = HexState.Open;
     
-    GridManager gm;
+    HexGameManager gm;
     int x, y;
     
     void OnMouseDown()
@@ -72,7 +75,7 @@ public class Hexagon : MonoBehaviour {
         Draw(gm.GetMaterial(state));
     }
     
-    public void Create(int x, int y, GridManager gm)
+    public void Create(int x, int y, HexGameManager gm)
     {
         //remember its position for future functions
         this.x = x;

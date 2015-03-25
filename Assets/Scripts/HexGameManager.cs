@@ -7,63 +7,67 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 
-public class GridManager : MonoBehaviour {
-
+public class HexGameManager : MonoBehaviour
+{
+    //public variables, to be edited in the Unity inspector
+    public int height = 13;
+    public int width = 23;
+    public Material openMaterial, obstacleMaterial, originMaterial, objectiveMaterial, lineMaterial, pathMaterial, voyagerMaterial;
+    public Text info, gridSizeText, countPanel, distancePanel, gridWidth, gridHeight;
+    
+    //private constants
     private const float PAD_X = 3.1f;
     private const float PAD_Y = 1.8f;
     private const float SIZE  = 2.5f;
     private const float LEVEL = 0.0f;
-
-    public int height = 13;
-    public int width = 23;
-    public Material openMaterial, obstacleMaterial, originMaterial, objectiveMaterial, lineMaterial, pathMaterial;
-    public Text info, gridSizeText, countPanel, distancePanel, gridWidth, gridHeight;
+    private const int MIN_WIDTH = 11;
+    private const int MIN_HEIGHT = 9;
+    private const int MAX_WIDTH = 99;
+    private const int MAX_HEIGHT = 99;
     
-    GameObject[,] hexGrid;
-    ArrayList lines;
-    ArrayList counters;
-    ArrayList log;
-    ArrayList distanceLog;
-    ArrayList directionLog;
-    ArrayList next;
+    //private variables
     bool origin, objective, cameraDrag;
     int originX, originY, objectiveX, objectiveY, count, distance;
+    GameObject[,] hexGrid;
     Vector3 cameraOrigin, cameraDiff;
+    List<GameObject> lines;
+    List<Tuple<int, int>> log, next;
+    List<float> distanceLog;
+    List<int> nextIndex;
+    List<HexDirection> directionLog;
     
-	void Start()
+    /** Initializes variables and the starting grid */
+    void Start()
     {
-        //instantiate the hex grid and data structures
-        lines = new ArrayList();
-        counters = new ArrayList();
-        log = new ArrayList();
-        distanceLog = new ArrayList();
-        directionLog = new ArrayList();
-        next = new ArrayList();
-        
         //initialize variables (negative == N/A)
         count = 0;
         distance = 0;
         
-        //set some default text
-        gridWidth.text = width.ToString();
-        gridHeight.text = height.ToString();
+        //instantiate the hex grid and data structures
+        lines = new List<GameObject>();
+        log = new List<Tuple<int, int>>();
+        next = new List<Tuple<int, int>>();
+        distanceLog = new List<float>();
+        nextIndex = new List<int>();
+        directionLog = new List<HexDirection>();
         
         //initialize the hexagon grid
         InitializeGrid();
-	}
+    }
     
+    /** Initializes the board with the current width/height as a 2-D grid */
     void InitializeGrid()
     {
-        //initialize hex grid array
-        hexGrid = new GameObject[width, height];
-        
         //limit lower width and height bounds
-        if (width < 5) width = 5;
-        if (height < 5) height = 5;
+        if (width < MIN_WIDTH) width = MIN_WIDTH;
+        if (height < MIN_HEIGHT) height = MIN_HEIGHT;
         
         //limit upper width and height bounds
-        if (width > 99) width = 99;
-        if (height > 99) height = 99;
+        if (width > MAX_WIDTH) width = MAX_WIDTH;
+        if (height > MAX_HEIGHT) height = MAX_HEIGHT;
+        
+        //initialize hex grid array
+        hexGrid = new GameObject[width, height];
     
         //initialize hexagon game objects
         for (int x = 0; x < width; x++)
@@ -84,7 +88,8 @@ public class GridManager : MonoBehaviour {
                 newHex.transform.localScale = new Vector3(SIZE, 1.0f, SIZE);
                 if (y % 2 == 0) 
                 {
-                    newHex.transform.position = new Vector3(x * (SIZE + PAD_X) + (SIZE + PAD_X) / 2, LEVEL, y * (SIZE + PAD_Y));
+                    newHex.transform.position = new Vector3(x * (SIZE + PAD_X) 
+                        + (SIZE + PAD_X) / 2, LEVEL, y * (SIZE + PAD_Y));
                 }
                 else
                 {
@@ -101,126 +106,160 @@ public class GridManager : MonoBehaviour {
         Camera.main.transform.position = new Vector3(center.x - SIZE / 2, 60f, center.z);
     }
     
-    void DestroyGrid()
+    /** Returns the x, y, z position of the given hexagon on the board */
+    public Vector3 GetPositionOfHexagon(int x, int y)
     {
-        for (int x = 0; x < width; x++)
-        {
-            for (int y = 0; y < height; y++)
-            {
-                if (hexGrid[x, y] != null)
-                {
-                    Destroy(hexGrid[x, y]);
-                }
-            }
-        }
-        hexGrid = null;
+        return hexGrid[x, y].transform.position;
     }
     
+    /** Update method, mainly for controlling user inputs & actions */
     void Update()
     {
         //keep time cost panel updated
         if (count == 0) countPanel.text = "N/A";
-        else countPanel.text = count + "";
+        else countPanel.text = count.ToString();
         
         //keep distance panel updated
         if (distance == 0) distancePanel.text = "N/A";
-        else distancePanel.text = distance + "";
+        else distancePanel.text = distance.ToString();
         
         //parse for user key inputs
         if (Input.GetKey(KeyCode.B))
         {
             if (origin && objective)
             {
+                //inform user of pending operations
+                info.text = "[BFS] Running a breadth-first search...";
+                
+                //clear the search history
                 ClearSearch();
-                info.text = "Running a breadth-first search...";
-                log.Add(new Tuple<int, int>(originX, originY));
-                directionLog.Add(null);
-                ArrayList path = BFS(originX, originY, objectiveX, objectiveY);
+                
+                //determine the optimal path that the BFS produces
+                List<Tuple<int, int>> path = null;
+                while ((path == null && next.Count > 0) || count == 0) 
+                {
+                    path = BFS(originX, originY, objectiveX, objectiveY);
+                }
+                
+                //draw the path if it could be found
                 if (path != null && path.Count > 0)
                 {
                     for (int i = 0; i < path.Count - 1; i++)
                     {
-                        Tuple<int, int> n1 = (Tuple<int, int>)path[i];
-                        Tuple<int, int> n2 = (Tuple<int, int>)path[i + 1];
-                        DrawPath(n1.Item1, n1.Item2, n2.Item1, n2.Item2);
+                        Tuple<int, int> n1 = path[i];
+                        Tuple<int, int> n2 = path[i + 1];
+                        DrawLine(n1.Item1, n1.Item2, n2.Item1, n2.Item2, pathMaterial);
                     }
-                    info.text = "A valid path from Origin to Objective was found!";
+                    
+                    //inform the user of the success
+                    info.text = "[BFS] A valid path from Origin to Objective was found!";
+                    
+                    //create and position a voyager unit
+                    GameObject voyager = CreateHexObject("Voyager", originX, originY);
+                    HexObject voyagerUnit = voyager.GetComponent<HexObject>();
+                    voyagerUnit.Create(this, voyagerMaterial);
+                    Vector3 startLocation = hexGrid[originX, originY].transform.position;
+                    Vector3 floatHeight = new Vector3(0f, 1f, 0f);
+                    voyager.transform.position = startLocation + floatHeight;
+                    
+                    //animate the voyage from the start to the finish
+                    path.Reverse();
+                    voyagerUnit.SetPath(path);
+                    lines.Add(voyager);
                 }
                 else
                 {
-                    info.text = "No path between Origin and Objective could be found!";
+                    //inform the user of the failure
+                    info.text = "[BFS] No path between Origin and Objective could be found!";
                 }
             }
             else
             {
-                info.text = "Please specify Origin and Objective cells before running search!";
-            }
-        }
-        else if (Input.GetKey(KeyCode.D))
-        {
-            if (origin && objective)
-            {
-                ClearSearch();
-                info.text = "Running a depth-first search...";
-                log.Add(new Tuple<int, int>(originX, originY));
-                ArrayList path = DFS(originX, originY, objectiveX, objectiveY);
-                if (path != null && path.Count > 0)
-                {
-                    for (int i = 0; i < path.Count - 1; i++)
-                    {
-                        Tuple<int, int> n1 = (Tuple<int, int>)path[i];
-                        Tuple<int, int> n2 = (Tuple<int, int>)path[i + 1];
-                        DrawPath(n1.Item1, n1.Item2, n2.Item1, n2.Item2);
-                    }
-                    info.text = "A valid path from Origin to Objective was found!";
-                }
-                else
-                {
-                    info.text = "No path between Origin and Objective could be found!";
-                }
-            }
-            else
-            {
-                info.text = "Please specify Origin and Objective cells before running search!";
+                //inform the user of the search requirements
+                info.text = "[BFS] Please specify Origin and Objective cells before running search!";
             }
         }
         else if (Input.GetKey(KeyCode.A))
         {
             if (origin && objective)
             {
+                //inform user of pending operations
+                info.text = "[A*] Running an A* search...";
+                
+                //clear the search history
                 ClearSearch();
-                info.text = "Running an A* search...";
+                
+                //determine the path that the A* search produces
                 log.Add(new Tuple<int, int>(originX, originY));
-                directionLog.Add(null);
                 distanceLog.Add(GetDistanceBetweenCells(originX, originY, objectiveX, objectiveY));
-                ArrayList path = AStar(originX, originY, objectiveX, objectiveY);
+                List<Tuple<int, int>> path = AStar(originX, originY, objectiveX, objectiveY);
+                
+                //draw the path if it could be found
                 if (path != null && path.Count > 0)
                 {
                     for (int i = 0; i < path.Count - 1; i++)
                     {
                         Tuple<int, int> n1 = (Tuple<int, int>)path[i];
                         Tuple<int, int> n2 = (Tuple<int, int>)path[i + 1];
-                        DrawPath(n1.Item1, n1.Item2, n2.Item1, n2.Item2);
+                        DrawLine(n1.Item1, n1.Item2, n2.Item1, n2.Item2, pathMaterial);
                     }
-                    info.text = "A valid path from Origin to Objective was found!";
+                    
+                    //inform the user of the success
+                    info.text = "[A*] A valid path from Origin to Objective was found!";
+                    
+                    //create and position a voyager unit
+                    GameObject voyager = CreateHexObject("Voyager", originX, originY);
+                    HexObject voyagerUnit = voyager.GetComponent<HexObject>();
+                    voyagerUnit.Create(this, voyagerMaterial);
+                    Vector3 startLocation = hexGrid[originX, originY].transform.position;
+                    Vector3 floatHeight = new Vector3(0f, 1f, 0f);
+                    voyager.transform.position = startLocation + floatHeight;
+                    
+                    //animate the voyage from the start to the finish
+                    path.Reverse();
+                    voyagerUnit.SetPath(path);
+                    lines.Add(voyager);
                 }
                 else
                 {
-                    info.text = "No path between Origin and Objective could be found!";
+                    //inform the user of the failure
+                    info.text = "[A*] No path between Origin and Objective could be found!";
                 }
             }
             else
             {
-                info.text = "Please specify Origin and Objective cells before running search!";
+                //inform the user of the search requirements
+                info.text = "[A*] Please specify Origin and Objective cells before running search!";
             }
         }
         else if (Input.GetKey(KeyCode.R))
         {
-            ResetBoard();
+            //inform the user of the pending operations
             info.text = "The board has been reset.";
+            
+            //wipe and remake the board
+            ResetBoard();
         }
     }
     
+    /** Creates a visible HexObject unit to animate paths */
+    GameObject CreateHexObject(string name, int x, int y)
+    {
+        //create the new object and component
+        GameObject newGameObject = new GameObject(name);
+        HexObject newHexObject = newGameObject.AddComponent<HexObject>();
+        
+        //initialize the new component to the given coordinates
+        newHexObject.properties = new List<string>();
+        newHexObject.values = new Dictionary<string, string>();
+        //newHexObject.x = x;
+        //newHexObject.y = y;
+        
+        //return a pointer to this GameObject
+        return newGameObject;
+    }
+    
+    /** Update function for camera movement features */
     void LateUpdate()
     {
         //control camera dragging with mouse right click
@@ -241,13 +280,30 @@ public class GridManager : MonoBehaviour {
         Camera.main.orthographicSize += mouseScroll * -12f;
     }
     
-    public void ResetBoard()
+    /** Destroys the entire board */
+    void DestroyBoard()
+    {
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                if (hexGrid[x, y] != null)
+                {
+                    Destroy(hexGrid[x, y]);
+                }
+            }
+        }
+        hexGrid = null;
+    }
+    
+    /** Clears the board and resizes it if necessary */
+    void ResetBoard()
     {
         //forget everything and destroy grid
         ClearSearch();
         ClearOrigin();
         ClearObjective();
-        DestroyGrid();
+        DestroyBoard();
         
         //fetch parameters from UI text input
         if (!Int32.TryParse(gridWidth.text, out width)) width = 5;
@@ -257,26 +313,31 @@ public class GridManager : MonoBehaviour {
         InitializeGrid();
     }
     
+    /** Determines if an origin is set */
     public bool HasOrigin()
     {
         return origin;
     }
     
+    /** Determines if an objective is set */
     public bool HasObjective()
     {
         return objective;
     }
     
+    /** Forget about the last origin that was set */
     public void ClearOrigin()
     {
         origin = false;
     }
     
+    /** Forget about the last objective that was set */
     public void ClearObjective()
     {
         objective = false;
     }
     
+    /** Sets the origin hexagon to the hexagon at the given coordinates */
     public void SetOrigin(int x, int y)
     {
         originX = x;
@@ -284,6 +345,7 @@ public class GridManager : MonoBehaviour {
         origin = true;
     }
     
+    /** Sets the objective hexagon to the hexagon at the given coordinates */
     public void SetObjective(int x, int y)
     {
         objectiveX = x;
@@ -291,6 +353,7 @@ public class GridManager : MonoBehaviour {
         objective = true;
     }
     
+    /** Gets the material for the given hexagon state */
     public Material GetMaterial(HexState state)
     {
         switch (state) {
@@ -307,7 +370,10 @@ public class GridManager : MonoBehaviour {
         }
     }
     
+    /** An enumeration defining possible Hexagon directions */
     enum HexDirection { LU, L, LD, RU, R, RD };
+    
+    /** Returns all hexagon directions */
     HexDirection[] GetDirections()
     {
         return new HexDirection[] 
@@ -321,7 +387,8 @@ public class GridManager : MonoBehaviour {
         };
     }
     
-    HexDirection RotateDirection(HexDirection direction)
+    /** Static method which rotates the given direction once counter-clockwise */
+    static HexDirection RotateDirection(HexDirection direction)
     {
         switch (direction)
         {
@@ -343,7 +410,8 @@ public class GridManager : MonoBehaviour {
         }
     }
     
-    HexDirection FlipDirection(HexDirection direction)
+    /** Static method which provides the opposite direction of that given */
+    static HexDirection FlipDirection(HexDirection direction)
     {
         switch (direction)
         {
@@ -365,6 +433,7 @@ public class GridManager : MonoBehaviour {
         }
     }
     
+    /** Returns the flost distance between two hexagon cells */
     float GetDistanceBetweenCells(int x1, int y1, int x2, int y2)
     {
         Vector3 p1 = hexGrid[x1, y1].transform.position;
@@ -373,6 +442,7 @@ public class GridManager : MonoBehaviour {
         return d;
     }
     
+    /** Returns the adjacent hexagon in the given direction of the given location */
     Tuple<int, int> GetAdjacentHex(HexDirection direction, int x, int y)
     {
         int destX = x, destY = y;
@@ -421,6 +491,7 @@ public class GridManager : MonoBehaviour {
         return new Tuple<int, int>(destX, destY);
     }
     
+    /** Determines if the hexagon at the given position is a valid location */
     bool IsValidHex(int x, int y)
     {
         //enforce boundary constraints
@@ -443,6 +514,7 @@ public class GridManager : MonoBehaviour {
         return hexGrid[x, y].GetComponent<Hexagon>().state == HexState.Open;
     }
     
+    /** Determines if the hexagon in the given direction is valid */
     bool IsOpenHex(HexDirection direction, int x, int y)
     {
         //determine the openness of the target cell
@@ -456,7 +528,9 @@ public class GridManager : MonoBehaviour {
         return false;
     }
     
-    ArrayList DFS(int x, int y, int objectiveX, int objectiveY)
+    /** Performs a depth-first search of the hexagon grid graph
+        NOTE: this method is terrible and should be obliterated */
+    List<Tuple<int, int>> DFS(int x, int y, int objectiveX, int objectiveY)
     {
         //check all the surrounding hexagons for paths
         foreach (HexDirection direction in GetDirections())
@@ -468,17 +542,14 @@ public class GridManager : MonoBehaviour {
             int targetX = target.Item1, targetY = target.Item2;
             
             //skip this cell if we've already been here:
-            if (log.Contains(target))
-            {
-                continue;
-            }
+            if (log.Contains(target)) continue;
             
             //did we make it?!?
             if (targetX == objectiveX && targetY == objectiveY)
             {
                 //cool! let's visualize the search path and return true!
                 DrawLine(x, y, targetX, targetY);
-                ArrayList path = new ArrayList();
+                List<Tuple<int, int>> path = new List<Tuple<int, int>>();
                 path.Add(target);
                 path.Add(new Tuple<int, int>(x, y));
                 distance = 1;
@@ -503,78 +574,41 @@ public class GridManager : MonoBehaviour {
         return null;
     }
     
-    ArrayList BFS(int x, int y, int objectiveX, int objectiveY)
+    /** Performs a breadth-first search from the origin to the objective
+        Returns an array of nodes representing the absolutely optimal path */
+    List<Tuple<int, int>> BFS(int originX, int originY, int objectiveX, int objectiveY)
     {
-        //check all the surrounding hexagons for paths
-        foreach (HexDirection direction in GetDirections())
+        //perform initialization tasks for BFS search
+        if (count == 0)
         {
-            //increment counter for each direction searched
-            count++;
-            
-            //get the coordinates of the cell in each direction
-            Tuple<int, int> targetHex = GetAdjacentHex(direction, x, y);
-            
-            //did we make it? if so, let's visualize the last jump
-            //also, we return a new list with only the objective node
-            if (targetHex.Item1 == objectiveX && targetHex.Item2 == objectiveY)
-            {
-                DrawLine(x, y, targetHex.Item1, targetHex.Item2);
-                ArrayList path = new ArrayList();
-                path.Add(targetHex);
-                path.Add(new Tuple<int, int>(x, y));
-                distance = 1;
-                return path;
-            }
-            
-            //check if this adjacent hex is both valid & open
-            //if so, visualize and log it so we return to it later
-            else if (IsOpenHex(direction, targetHex.Item1, targetHex.Item2))
-            {
-                DrawLine(x, y, targetHex.Item1, targetHex.Item2);
-                log.Add(new Tuple<int, int>(targetHex.Item1, targetHex.Item2));
-                directionLog.Add(direction);
-                next.Add(new Tuple<int, int>(targetHex.Item1, targetHex.Item2));
-            }
+            Tuple<int, int> o = new Tuple<int, int>(originX, originY);
+            log.Add(o);
+            next.Add(o);
         }
-        
-        //invoke recursive helper function
-        ArrayList bfs = null;
-        while (bfs == null && next.Count > 0)
-        {
-            bfs = BFSHelper(objectiveX, objectiveY);
-        }
-        return bfs;
-    }
     
-    ArrayList BFSHelper(int objectiveX, int objectiveY)
-    {
-        ArrayList temp = new ArrayList();
+        //core of the recursive algorithm
+        List<Tuple<int, int>> temp = new List<Tuple<int, int>>();
         for (int i=0; i<next.Count; i++)
         {
-            Tuple<int, int> edgeHex = (Tuple<int, int>)next[i];
-            int x = edgeHex.Item1;
-            int y = edgeHex.Item2;
+            Tuple<int, int> edgeHex = next[i];
+            int x = edgeHex.Item1, y = edgeHex.Item2;
             foreach (HexDirection direction in GetDirections())
             {
-                count++;
                 Tuple<int, int> targetHex = GetAdjacentHex(direction, x, y);
-                int tX = targetHex.Item1;
-                int tY = targetHex.Item2;
-                if (log.Contains(targetHex))
-                {
-                    continue;
-                }
+                int tX = targetHex.Item1, tY = targetHex.Item2;
+                if (log.Contains(targetHex)) continue;
                 else if (tX == objectiveX && tY == objectiveY)
                 {
+                    count++;
                     DrawLine(x, y, tX, tY);
-                    ArrayList path = new ArrayList();
+                    List<Tuple<int, int>> path = new List<Tuple<int, int>>();
                     path.Add(targetHex);
-                    Tuple<int, int> o = (   Tuple<int, int>)log[0];
+                    Tuple<int, int> o = (Tuple<int, int>)log[0];
                     Tuple<int, int> k = new Tuple<int, int>(x, y);
                     while (!k.Equals(o))
                     {
                         path.Add(k);
-                        HexDirection d = (HexDirection)directionLog[log.IndexOf(k)];
+                        HexDirection d = (HexDirection)directionLog[log.IndexOf(k) - 1];
                         k = GetAdjacentHex(FlipDirection(d), k.Item1, k.Item2);
                     }
                     path.Add(o);
@@ -583,6 +617,7 @@ public class GridManager : MonoBehaviour {
                 }
                 else if (IsOpenHex(direction, tX, tY))
                 {
+                    count++;
                     DrawLine(x, y, tX, tY);
                     log.Add(new Tuple<int, int>(tX, tY));
                     directionLog.Add(direction);
@@ -594,7 +629,8 @@ public class GridManager : MonoBehaviour {
         return null;
     }
     
-    ArrayList AStar(int x, int y, int objectiveX, int objectiveY)
+    /** The first iteration of the A* search function */
+    List<Tuple<int, int>> AStar(int x, int y, int objectiveX, int objectiveY)
     {
         foreach (HexDirection direction in GetDirections())
         {
@@ -604,8 +640,9 @@ public class GridManager : MonoBehaviour {
             int tY = targetHex.Item2;
             if (targetHex.Item1 == objectiveX && targetHex.Item2 == objectiveY)
             {
+                count++;
                 DrawLine(x, y, tX, tY);
-                ArrayList path = new ArrayList();
+                List<Tuple<int, int>> path = new List<Tuple<int, int>>();
                 path.Add(targetHex);
                 path.Add(new Tuple<int, int>(x, y));
                 distance = 1;
@@ -621,33 +658,28 @@ public class GridManager : MonoBehaviour {
             }
         }
         
-        ArrayList astar = null;
+        List<Tuple<int, int>> astar = null;
         while (astar == null)
         {
             int indexOfShortest = -1;
             float shortestDistance = -1f;
             for (int i=0; i<log.Count; i++)
             {
-                if (next.Contains(i))
-                {
-                    continue;
-                }
-                else if (shortestDistance < 0 || (float)distanceLog[i] < shortestDistance)
+                if (nextIndex.Contains(i)) continue;
+                else if (shortestDistance < 0 || distanceLog[i] < shortestDistance)
                 {
                     shortestDistance = (float)distanceLog[i];
                     indexOfShortest = i;
                 }
             }
-            if (indexOfShortest == -1)
-            {
-                return null;
-            }
+            if (indexOfShortest == -1) return null;
             astar = AStarHelper(objectiveX, objectiveY, indexOfShortest);
         }
         return astar;
     }
     
-    ArrayList AStarHelper(int objectiveX, int objectiveY, int i)
+    /** A helper function which checks arrays of unchecked nodes for distance */
+    List<Tuple<int, int>> AStarHelper(int objectiveX, int objectiveY, int i)
     {
         Tuple<int, int> edgeHex = (Tuple<int, int>)log[i];
         int x = edgeHex.Item1;
@@ -655,25 +687,22 @@ public class GridManager : MonoBehaviour {
         int initialLogSize = log.Count;
         foreach (HexDirection direction in GetDirections())
         {
-            count++;
             Tuple<int, int> targetHex = GetAdjacentHex(direction, x, y);
             int tX = targetHex.Item1;
             int tY = targetHex.Item2;
-            if (log.Contains(targetHex))
-            {
-                continue;
-            }
+            if (log.Contains(targetHex)) continue;
             else if (tX == objectiveX && tY == objectiveY)
             {
+                count++;
                 DrawLine(x, y, tX, tY);
-                ArrayList path = new ArrayList();
+                List<Tuple<int, int>> path = new List<Tuple<int, int>>();
                 path.Add(targetHex);
                 Tuple<int, int> o = (Tuple<int, int>)log[0];
                 Tuple<int, int> k = new Tuple<int, int>(x, y);
                 while (!k.Equals(o))
                 {
                     path.Add(k);
-                    HexDirection d = (HexDirection)directionLog[log.IndexOf(k)];
+                    HexDirection d = (HexDirection)directionLog[log.IndexOf(k) - 1];
                     k = GetAdjacentHex(FlipDirection(d), k.Item1, k.Item2);
                 }
                 path.Add(o);
@@ -682,6 +711,7 @@ public class GridManager : MonoBehaviour {
             }
             else if (IsOpenHex(direction, tX, tY))
             {
+                count++;
                 float d = GetDistanceBetweenCells(tX, tY, objectiveX, objectiveY);
                 DrawLine(x, y, tX, tY);
                 log.Add(new Tuple<int, int>(tX, tY));
@@ -689,19 +719,18 @@ public class GridManager : MonoBehaviour {
                 directionLog.Add(direction);
             }
         }
-        if (initialLogSize == log.Count)
-        {
-            next.Add(i);
-        }
+        if (initialLogSize == log.Count) nextIndex.Add(i);
         return null;
     }
     
-    void DrawPath(int x1, int y1, int x2, int y2)
+    /** Draws a line between two given Hexagons and stores it in "lines" */
+    void DrawLine(int x1, int y1, int x2, int y2, Material mat = null)
     {
+        if (mat == null) mat = lineMaterial;
         GameObject path = new GameObject("Path");
         LineRenderer lr = path.AddComponent<LineRenderer>();
         Vector3 offset = new Vector3(0f, 0.1f, 0f);
-        lr.material = pathMaterial;
+        lr.material = mat;
         lr.sortingOrder = 100;
         lr.SetWidth(1f, 1f);
         lr.SetVertexCount(2);
@@ -710,36 +739,17 @@ public class GridManager : MonoBehaviour {
         lines.Add(path);
     }
     
-    void DrawLine(int x1, int y1, int x2, int y2)
-    {
-        GameObject path = new GameObject("Path");
-        LineRenderer lr = path.AddComponent<LineRenderer>();
-        Vector3 offset = new Vector3(0f, 0.1f, 0f);
-        lr.material = lineMaterial;
-        lr.sortingOrder = 100;
-        lr.SetWidth(1f, 1f);
-        lr.SetVertexCount(2);
-        lr.SetPosition(0, hexGrid[x1, y1].transform.position + offset);
-        lr.SetPosition(1, hexGrid[x2, y2].transform.position + offset);
-        lines.Add(path);
-    }
-    
+    /** Clears memory associated with a search function and prepares the next */
     public void ClearSearch()
     {
         distance = 0;
         count = 0;
-        foreach (GameObject line in lines)
-        {
-            GameObject.Destroy(line);
-        }
-        foreach (GameObject counter in counters)
-        {
-            GameObject.Destroy(counter);
-        }
+        foreach (GameObject line in lines) GameObject.Destroy(line);
         log.Clear();
         distanceLog.Clear();
         directionLog.Clear();
         next.Clear();
+        nextIndex.Clear();
         info.text = "";
     }
 }
